@@ -4,6 +4,7 @@ version = "0.0.3"
 authors = ["crhino <piraino.chris@gmail.com>"]
 license = "MIT"
 description = "Rust netlink library"
+repository = "https://github.com/crhino/netlink-rs"
 
 [dependencies]
 libc = "^0.2"
