@@ -328,7 +328,7 @@ mod tests {
         let (p, n) = Payload::nlmsg_error(&bytes).unwrap();
 
         assert_eq!(n, bytes.len());
-        if let Payload::Err(h) = p {
+        if let Payload::Err(_, h) = p {
             assert_eq!(h, hdr);
         } else {
             panic!("payload is not Err enum");
@@ -390,7 +390,7 @@ mod tests {
         let mut bytes = vec![];
         bytes.write(&hdr_bytes).unwrap();
 
-        bytes.write_u32::<NativeEndian>(1).unwrap();
+        bytes.write_i32::<NativeEndian>(1).unwrap();
         let mut err_hdr = NlMsgHeader::request();
         err_hdr.data_length(4).pid(9).seq(1).dump();
         bytes.write(&err_hdr.bytes()).unwrap();
@@ -399,7 +399,7 @@ mod tests {
         assert_eq!(n, bytes.len());
         assert_eq!(hdr, msg.header());
 
-        if let &Payload::Err(h) = msg.payload() {
+        if let &Payload::Err(_, h) = msg.payload() {
             assert_eq!(h, err_hdr);
         } else {
             panic!("msg is not Err enum");
