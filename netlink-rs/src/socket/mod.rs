@@ -10,7 +10,7 @@ use socket::socket_impl::Socket as SocketImpl;
 
 use std::mem::{size_of};
 
-use libc::{AF_NETLINK, SOCK_RAW};
+use libc::{c_int, AF_NETLINK, SOCK_RAW};
 
 use std::convert::Into;
 use std::io::{self, Write, Cursor};
@@ -26,7 +26,7 @@ pub enum Payload<'a> {
     None,
     Data(&'a [u8]),
     Ack(NlMsgHeader),
-    Err(NlMsgHeader),
+    Err(c_int, NlMsgHeader),
 }
 
 impl<'a> Payload<'a> {
@@ -52,7 +52,7 @@ impl<'a> Payload<'a> {
         if err == 0 {
             Ok((Payload::Ack(hdr), num))
         } else {
-            Ok((Payload::Err(hdr), num))
+            Ok((Payload::Err(err, hdr), num))
         }
     }
 
@@ -69,10 +69,10 @@ impl<'a> Payload<'a> {
                 try!(vec.write_u32::<NativeEndian>(0));
                 try!(vec.write(h.bytes()));
                 Ok(vec)
-            },
-            Payload::Err(h) => {
+            }
+            Payload::Err(errno, h) => {
                 let mut vec = vec![];
-                try!(vec.write_i32::<NativeEndian>(1));
+                try!(vec.write_i32::<NativeEndian>(errno));
                 try!(vec.write(h.bytes()));
                 Ok(vec)
             },
