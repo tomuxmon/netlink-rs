@@ -89,17 +89,23 @@ pub struct Msg<'a> {
 impl<'a> Msg<'a> {
     pub fn from_bytes(bytes: &'a [u8]) -> io::Result<(Msg<'a>, usize)> {
         let (hdr, n) = try!(NlMsgHeader::from_bytes(bytes));
+
+        // message length is total length minus header size
+        let end: usize = hdr.msg_length() as usize;
+
+        // range check: check payload length is inside bytes and does not
+        // overlap with header
+        if !(n <= end && end <= bytes.len()) {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid message length"));
+        }
+
         let (payload, n2) = match hdr.msg_type() {
-            MsgType::Done => {
-                (Payload::None, 0)
-            },
-            MsgType::Error => {
-                try!(Payload::nlmsg_error(&bytes[n..]))
-            },
+            MsgType::Done => (Payload::None, 0),
+            MsgType::Error => try!(Payload::nlmsg_error(&bytes[n..end])),
             _ => {
                 let msg_len = hdr.msg_length() as usize - nlmsg_header_length();
                 try!(Payload::data(&bytes[n..], msg_len))
-            },
+            }
         };
 
         Ok((Msg{
