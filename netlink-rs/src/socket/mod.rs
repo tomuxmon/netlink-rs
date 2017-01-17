@@ -43,7 +43,9 @@ impl<'a> Payload<'a> {
 
     fn nlmsg_error(bytes: &'a [u8]) -> io::Result<(Payload<'a>, usize)> {
         let mut cursor = Cursor::new(bytes);
-        let err = try!(cursor.read_u32::<NativeEndian>());
+        // the error field is of type c_int, but we lack proper ways of reading
+        // that. FIXME: implement proper checks to ensure that c_int == i32
+        let err = try!(cursor.read_i32::<NativeEndian>());
         let n = cursor.position() as usize;
         let (hdr, n2) = try!(NlMsgHeader::from_bytes(&bytes[n..]));
         let num = n + n2;
@@ -70,7 +72,7 @@ impl<'a> Payload<'a> {
             },
             Payload::Err(h) => {
                 let mut vec = vec![];
-                try!(vec.write_u32::<NativeEndian>(1));
+                try!(vec.write_i32::<NativeEndian>(1));
                 try!(vec.write(h.bytes()));
                 Ok(vec)
             },
