@@ -2,22 +2,16 @@
 #![allow(dead_code)]
 #![allow(unused_unsafe)]
 
-use std::iter::{repeat};
-use std::io::{Error, Result,};
-use std::mem;
-use std::ptr;
-use std::ops::Drop;
-use std::vec::{Vec,};
-
 use libc::{
-    c_void, size_t, socklen_t, sockaddr,
-    socket, setsockopt, bind, send, recv, recvfrom,
-    connect, getsockname,
-    close,
-    listen, sendto, accept,
-    sendmsg, msghdr, iovec,
-    shutdown,
+    accept, bind, c_void, close, connect, getsockname, iovec, listen, msghdr, recv, recvfrom, send,
+    sendmsg, sendto, setsockopt, shutdown, size_t, sockaddr, socket, socklen_t,
 };
+use std::io::{Error, Result};
+use std::iter::repeat;
+use std::mem;
+use std::ops::Drop;
+use std::ptr;
+use std::vec::Vec;
 
 macro_rules! _try {
     ( $x:expr ) => {{
@@ -41,11 +35,10 @@ pub struct Socket {
     fd: i32,
 }
 
-
 impl Socket {
     pub fn new(family: i32, socket_type: i32, protocol: i32) -> Result<Socket> {
         let fd = _try!(socket(family, socket_type, protocol));
-        Ok(Socket { fd: fd })
+        Ok(Socket { fd })
     }
 
     /// Returns the underlying file descriptor.
@@ -56,8 +49,11 @@ impl Socket {
     pub fn getsockname(&self) -> Result<sockaddr> {
         let mut sa: sockaddr = unsafe { mem::zeroed() };
         let mut len: socklen_t = mem::size_of::<sockaddr>() as socklen_t;
-        _try!(getsockname(self.fd,
-              &mut sa as *mut sockaddr, &mut len as *mut socklen_t));
+        _try!(getsockname(
+            self.fd,
+            &mut sa as *mut sockaddr,
+            &mut len as *mut socklen_t
+        ));
         assert_eq!(len, mem::size_of::<sockaddr>() as socklen_t);
 
         Ok(sa)
@@ -66,8 +62,7 @@ impl Socket {
     pub fn setsockopt<T>(&self, level: i32, name: i32, value: T) -> Result<()> {
         unsafe {
             let value = &value as *const T as *const c_void;
-            _try!(setsockopt(
-                    self.fd, level, name, value, sockaddr_len()));
+            _try!(setsockopt(self.fd, level, name, value, sockaddr_len()));
         }
         Ok(())
     }
@@ -78,24 +73,29 @@ impl Socket {
         Ok(())
     }
 
-    pub fn sendto(&self, buffer: &[u8], flags: i32, sa: &sockaddr)
-            -> Result<usize> {
-        let sent = _try!(
-            sendto(self.fd, buffer.as_ptr() as *const c_void,
-            buffer.len() as size_t, flags, sa as *const sockaddr,
-            sockaddr_len()));
+    pub fn sendto(&self, buffer: &[u8], flags: i32, sa: &sockaddr) -> Result<usize> {
+        let sent = _try!(sendto(
+            self.fd,
+            buffer.as_ptr() as *const c_void,
+            buffer.len() as size_t,
+            flags,
+            sa as *const sockaddr,
+            sockaddr_len()
+        ));
         Ok(sent as usize)
     }
 
-    pub fn send(&self, buffer: &[u8], flags: i32)
-            -> Result<usize> {
-        let sent = _try!(
-            send(self.fd, buffer.as_ptr() as *const c_void, buffer.len() as size_t, flags));
+    pub fn send(&self, buffer: &[u8], flags: i32) -> Result<usize> {
+        let sent = _try!(send(
+            self.fd,
+            buffer.as_ptr() as *const c_void,
+            buffer.len() as size_t,
+            flags
+        ));
         Ok(sent as usize)
     }
 
-    pub fn sendmsg(&self, msg: &[u8], data: &[u8], flags: i32, sa: &sockaddr)
-            -> Result<usize> {
+    pub fn sendmsg(&self, msg: &[u8], data: &[u8], flags: i32, sa: &sockaddr) -> Result<usize> {
         let msg = unsafe {
             let msg_iovec = iovec {
                 iov_base: msg as *const [u8] as *mut c_void,
@@ -106,7 +106,7 @@ impl Socket {
                 iov_len: data.len() as size_t,
             };
             let mut iovecs = [msg_iovec, data_iovec];
-            msghdr{
+            msghdr {
                 msg_name: sa as *const sockaddr as *mut c_void,
                 msg_namelen: sockaddr_len(),
                 msg_iov: iovecs.as_mut_ptr() as *mut iovec,
@@ -128,7 +128,7 @@ impl Socket {
         // This is needed to get some actual elements in the vector, not just a capacity
         a.extend(repeat(0u8).take(bytes));
 
-        let (socket_addr, received) = try!(self.recvfrom_into(&mut a[..], flags));
+        let (socket_addr, received) = self.recvfrom_into(&mut a[..], flags)?;
 
         a.truncate(received);
         Ok((socket_addr, a.into_boxed_slice()))
@@ -140,9 +140,14 @@ impl Socket {
         let mut sa: sockaddr = unsafe { mem::zeroed() };
         let sockaddr_len = sockaddr_len();
         let mut sa_len: socklen_t = sockaddr_len;
-        let received = _try!(
-            recvfrom(self.fd, buffer.as_ptr() as *mut c_void, buffer.len() as size_t, flags,
-            &mut sa as *mut sockaddr, &mut sa_len as *mut socklen_t));
+        let received = _try!(recvfrom(
+            self.fd,
+            buffer.as_ptr() as *mut c_void,
+            buffer.len() as size_t,
+            flags,
+            &mut sa as *mut sockaddr,
+            &mut sa_len as *mut socklen_t
+        ));
         // sockaddr_nl only has 12 bytes, still fits into 16 byte sockaddr
         assert!(sa_len <= sockaddr_len);
         Ok((sa, received as usize))
@@ -155,7 +160,7 @@ impl Socket {
         // This is needed to get some actual elements in the vector, not just a capacity
         a.extend(repeat(0u8).take(bytes));
 
-        let received = try!(self.recv_into(&mut a[..], flags));
+        let received = self.recv_into(&mut a[..], flags)?;
 
         a.truncate(received);
         Ok(a.into_boxed_slice())
@@ -164,7 +169,12 @@ impl Socket {
     /// Similar to `recv` but receives to predefined buffer and returns the number
     /// of bytes read.
     pub fn recv_into(&self, buffer: &mut [u8], flags: i32) -> Result<usize> {
-        let received = _try!(recv(self.fd, buffer.as_ptr() as *mut c_void, buffer.len() as size_t, flags));
+        let received = _try!(recv(
+            self.fd,
+            buffer.as_ptr() as *mut c_void,
+            buffer.len() as size_t,
+            flags
+        ));
         Ok(received as usize)
     }
 
@@ -183,10 +193,13 @@ impl Socket {
         let sockaddr_len = sockaddr_len();
         let mut sa_len: socklen_t = sockaddr_len;
 
-        let fd = _try!(
-            accept(self.fd, &mut sa as *mut sockaddr, &mut sa_len as *mut socklen_t));
+        let fd = _try!(accept(
+            self.fd,
+            &mut sa as *mut sockaddr,
+            &mut sa_len as *mut socklen_t
+        ));
         assert_eq!(sa_len, sockaddr_len);
-        Ok((Socket { fd: fd }, sa))
+        Ok((Socket { fd }, sa))
     }
 
     pub fn close(&self) -> Result<()> {
@@ -209,12 +222,14 @@ impl Drop for Socket {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libc::{
+        in_addr, sa_family_t, sockaddr, sockaddr_in, AF_INET, SOCK_DGRAM, SOCK_STREAM, SOL_SOCKET,
+        SO_REUSEADDR,
+    };
+    use libc::{AF_NETLINK, SOCK_RAW};
     use std::mem;
-    use std::thread;
-    use libc::{AF_NETLINK, SOCK_RAW,};
-    use libc::{sa_family_t, in_addr, sockaddr, sockaddr_in, AF_INET,
-        SOCK_STREAM, SOCK_DGRAM, SOL_SOCKET, SO_REUSEADDR};
     use std::net::{SocketAddr, ToSocketAddrs};
+    use std::thread;
 
     fn socketaddr_to_sockaddr<T: ToSocketAddrs + ?Sized>(addr: &T) -> sockaddr {
         let addr = addr.to_socket_addrs().unwrap().next().unwrap();
@@ -226,16 +241,16 @@ mod tests {
                     sa.sin_port = v4.port();
                     sa.sin_addr = *(&v4.ip().octets() as *const u8 as *const in_addr);
                     *(&sa as *const sockaddr_in as *const sockaddr)
-                },
+                }
                 SocketAddr::V6(_) => {
                     panic!("Not supported");
                     /*
-                       let mut sa: sockaddr_in6 = mem::zeroed();
-                       sa.sin6_family = AF_INET6 as u16;
-                       sa.sin6_port = htons(v6.port());
-                       (&sa as *const sockaddr_in6 as *const sockaddr)
-                       */
-                },
+                    let mut sa: sockaddr_in6 = mem::zeroed();
+                    sa.sin6_family = AF_INET6 as u16;
+                    sa.sin6_port = htons(v6.port());
+                    (&sa as *const sockaddr_in6 as *const sockaddr)
+                    */
+                }
             }
         }
     }
@@ -258,9 +273,9 @@ mod tests {
         let s = Socket::new(AF_INET, SOCK_DGRAM, 0).unwrap();
         let sa = socketaddr_to_sockaddr("127.0.0.1:0");
         s.bind(&sa).unwrap();
-         assert_eq!(s.getsockname().unwrap().sa_family, sa.sa_family);
-         // Skip port part since we are picking a random port.
-         assert_eq!(s.getsockname().unwrap().sa_data[2..], sa.sa_data[2..]);
+        assert_eq!(s.getsockname().unwrap().sa_family, sa.sa_family);
+        // Skip port part since we are picking a random port.
+        assert_eq!(s.getsockname().unwrap().sa_data[2..], sa.sa_data[2..]);
     }
 
     #[test]
@@ -311,10 +326,12 @@ mod tests {
 
         let sender = Socket::new(AF_INET, SOCK_DGRAM, 0).unwrap();
 
-        assert_eq!(sender.sendmsg(&[1,2,3,4],
-                                  &[5,6,7,8],
-                                  0,
-                                  &address).unwrap(), 8);
+        assert_eq!(
+            sender
+                .sendmsg(&[1, 2, 3, 4], &[5, 6, 7, 8], 0, &address)
+                .unwrap(),
+            8
+        );
         let (_, received) = receiver.recvfrom(10, 0).unwrap();
         assert_eq!(received.len(), 8);
     }

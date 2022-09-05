@@ -1,7 +1,6 @@
-use libc::{AF_NETLINK, sa_family_t, sockaddr, c_ushort};
-
-use std::{fmt, mem};
+use libc::{c_ushort, sa_family_t, sockaddr, AF_NETLINK};
 use std::io::{self, ErrorKind};
+use std::{fmt, mem};
 
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -41,18 +40,18 @@ impl NetlinkAddr {
 
 impl fmt::Debug for NetlinkAddr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "<NetlinkAddr "));
+        write!(f, "<NetlinkAddr ")?;
 
         // only report unusual values for nl_family and nl_pad
         if self.0.nl_family != AF_NETLINK as sa_family_t {
-            try!(write!(f, "[nl_family: {}]", self.0.nl_family));
+            write!(f, "[nl_family: {}]", self.0.nl_family)?;
         }
 
         if self.0.nl_pad != 0 {
-            try!(write!(f, "[nl_pad: {}]", self.0.nl_pad));
+            write!(f, "[nl_pad: {}]", self.0.nl_pad)?;
         }
 
-        try!(write!(f, "pid={} groups={}>", self.0.nl_pid, self.0.nl_groups));
+        write!(f, "pid={} groups={}>", self.0.nl_pid, self.0.nl_groups)?;
 
         Ok(())
     }
@@ -65,17 +64,18 @@ pub fn sockaddr_to_netlinkaddr(sa: &sockaddr) -> io::Result<NetlinkAddr> {
             let pid = snl.nl_pid;
             let groups = snl.nl_groups;
             Ok(NetlinkAddr::new(pid, groups))
-        },
-        _ => {
-            Err(io::Error::new(ErrorKind::InvalidInput, "sockaddr is not Netlink family"))
         }
+        _ => Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            "sockaddr is not Netlink family",
+        )),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use libc::{AF_NETLINK, sa_family_t};
     use super::*;
+    use libc::{sa_family_t, AF_NETLINK};
 
     #[test]
     fn netlink_addr_and_sockaddr() {

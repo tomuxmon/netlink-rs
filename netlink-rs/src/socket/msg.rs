@@ -1,10 +1,9 @@
-use super::{nlmsg_length, nlmsg_header_length};
+use super::{nlmsg_header_length, nlmsg_length};
+use byteorder::{NativeEndian, ReadBytesExt};
 use std::fmt;
+use std::io::{self, Cursor, ErrorKind};
 use std::mem::size_of;
 use std::slice::from_raw_parts;
-use std::io::{self, ErrorKind, Cursor};
-
-use byteorder::{NativeEndian, ReadBytesExt};
 
 #[derive(Clone, Copy, Debug)]
 pub enum MsgType {
@@ -70,10 +69,10 @@ impl Into<u16> for Flags {
     fn into(self) -> u16 {
         use self::Flags::*;
         match self {
-            Request =>  1,
-            Multi   =>  2,
-            Ack     =>  4,
-            Echo    =>  8,
+            Request => 1,
+            Multi => 2,
+            Ack => 4,
+            Echo => 8,
         }
     }
 }
@@ -95,10 +94,10 @@ impl Into<u16> for GetFlags {
     fn into(self) -> u16 {
         use self::GetFlags::*;
         match self {
-            Root    =>  0x100,
-            Match   =>  0x200,
-            Atomic  =>  0x400,
-            Dump    =>  0x100 | 0x200,
+            Root => 0x100,
+            Match => 0x200,
+            Atomic => 0x400,
+            Dump => 0x100 | 0x200,
         }
     }
 }
@@ -120,10 +119,10 @@ impl Into<u16> for NewFlags {
     fn into(self) -> u16 {
         use self::NewFlags::*;
         match self {
-            Replace =>  0x100,
-            Excl    =>  0x200,
-            Create  =>  0x400,
-            Append  =>  0x800,
+            Replace => 0x100,
+            Excl => 0x200,
+            Create => 0x400,
+            Append => 0x800,
         }
     }
 }
@@ -146,29 +145,31 @@ pub struct NlMsgHeader {
 
 impl fmt::Debug for NlMsgHeader {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f,
-                    "<NlMsgHeader len={} {:?} flags=[ ",
-                    self.msg_length,
-                    MsgType::from(self.nl_type)));
+        write!(
+            f,
+            "<NlMsgHeader len={} {:?} flags=[ ",
+            self.msg_length,
+            MsgType::from(self.nl_type)
+        )?;
 
         // output readable flags
         if self.flags & 1 != 0 {
-            try!(write!(f, "Request "));
+            write!(f, "Request ")?;
         }
         if self.flags & 2 != 0 {
-            try!(write!(f, "Multi "));
+            write!(f, "Multi ")?;
         }
         if self.flags & 4 != 0 {
-            try!(write!(f, "Ack "));
+            write!(f, "Ack ")?;
         }
         if self.flags & 8 != 0 {
-            try!(write!(f, "Echo "));
+            write!(f, "Echo ")?;
         }
         if self.flags >> 4 != 0 {
-            try!(write!(f, "other({:#X})", self.flags));
+            write!(f, "other({:#X})", self.flags)?;
         }
 
-        try!(write!(f, "] seq={} pid={}>", self.seq, self.pid));
+        write!(f, "] seq={} pid={}>", self.seq, self.pid)?;
 
         Ok(())
     }
@@ -219,22 +220,28 @@ impl NlMsgHeader {
 
     pub fn from_bytes(bytes: &[u8]) -> io::Result<(NlMsgHeader, usize)> {
         let mut cursor = Cursor::new(bytes);
-        let len = try!(cursor.read_u32::<NativeEndian>());
-        let nl_type = try!(cursor.read_u16::<NativeEndian>());
-        let flags = try!(cursor.read_u16::<NativeEndian>());
-        let seq = try!(cursor.read_u32::<NativeEndian>());
-        let pid = try!(cursor.read_u32::<NativeEndian>());
+        let len = cursor.read_u32::<NativeEndian>()?;
+        let nl_type = cursor.read_u16::<NativeEndian>()?;
+        let flags = cursor.read_u16::<NativeEndian>()?;
+        let seq = cursor.read_u32::<NativeEndian>()?;
+        let pid = cursor.read_u32::<NativeEndian>()?;
 
         if len < nlmsg_header_length() as u32 {
-            Err(io::Error::new(ErrorKind::InvalidInput, "length smaller than msg header size"))
+            Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                "length smaller than msg header size",
+            ))
         } else {
-            Ok((NlMsgHeader{
-                msg_length: len,
-                nl_type: nl_type,
-                flags: flags,
-                seq: seq,
-                pid: pid,
-            }, cursor.position() as usize))
+            Ok((
+                NlMsgHeader {
+                    msg_length: len,
+                    nl_type,
+                    flags,
+                    seq,
+                    pid,
+                },
+                cursor.position() as usize,
+            ))
         }
     }
 
@@ -262,19 +269,22 @@ impl NlMsgHeader {
 
     /// Multipart message
     pub fn multipart(&mut self) -> &mut NlMsgHeader {
-        self.flags |= Flags::Multi.into();
+        let multi: u16 = Flags::Multi.into();
+        self.flags |= multi;
         self
     }
 
     /// Request acknowledgement
     pub fn ack(&mut self) -> &mut NlMsgHeader {
-        self.flags |= Flags::Ack.into();
+        let ack: u16 = Flags::Ack.into();
+        self.flags |= ack;
         self
     }
 
     /// Echo message
     pub fn echo(&mut self) -> &mut NlMsgHeader {
-        self.flags |= Flags::Echo.into();
+        let echo: u16 = Flags::Echo.into();
+        self.flags |= echo;
         self
     }
 
@@ -292,49 +302,57 @@ impl NlMsgHeader {
 
     /// Override existing
     pub fn replace(&mut self) -> &mut NlMsgHeader {
-        self.flags |= NewFlags::Replace.into();
+        let replace: u16 = NewFlags::Replace.into();
+        self.flags |= replace;
         self
     }
 
     /// Do not touch, if it exists
     pub fn excl(&mut self) -> &mut NlMsgHeader {
-        self.flags |= NewFlags::Excl.into();
+        let excl: u16 = NewFlags::Excl.into();
+        self.flags |= excl;
         self
     }
 
     /// Create, if it does not exist
     pub fn create(&mut self) -> &mut NlMsgHeader {
-        self.flags |= NewFlags::Create.into();
+        let create: u16 = NewFlags::Create.into();
+        self.flags |= create;
         self
     }
 
     /// Add to end of list
     pub fn append(&mut self) -> &mut NlMsgHeader {
-        self.flags |= NewFlags::Append.into();
+        let append: u16 = NewFlags::Append.into();
+        self.flags |= append;
         self
     }
 
     /// specify tree root
     pub fn root(&mut self) -> &mut NlMsgHeader {
-        self.flags |= GetFlags::Root.into();
+        let root: u16 = GetFlags::Root.into();
+        self.flags |= root;
         self
     }
 
     /// return all matching
     pub fn match_provided(&mut self) -> &mut NlMsgHeader {
-        self.flags |= GetFlags::Match.into();
+        let matc: u16 = GetFlags::Match.into();
+        self.flags |= matc;
         self
     }
 
     /// atomic GET
     pub fn atomic(&mut self) -> &mut NlMsgHeader {
-        self.flags |= GetFlags::Atomic.into();
+        let atomic: u16 = GetFlags::Atomic.into();
+        self.flags |= atomic;
         self
     }
 
     /// (Root|Match)
     pub fn dump(&mut self) -> &mut NlMsgHeader {
-        self.flags |= GetFlags::Dump.into();
+        let dump: u16 = GetFlags::Dump.into();
+        self.flags |= dump;
         self
     }
 }

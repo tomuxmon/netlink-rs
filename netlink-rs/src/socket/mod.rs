@@ -1,22 +1,18 @@
+#[allow(clippy::unused_io_amount)]
 mod socket_impl;
 
 mod address;
 pub use self::address::*;
-
 mod msg;
 pub use self::msg::*;
 
-use socket::socket_impl::Socket as SocketImpl;
-
-use std::mem::{size_of};
-
+use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
 use libc::{c_int, AF_NETLINK, SOCK_RAW};
-
+use socket::socket_impl::Socket as SocketImpl;
 use std::convert::Into;
-use std::io::{self, Write, Cursor};
-use std::iter::{repeat};
-
-use byteorder::{NativeEndian, WriteBytesExt, ReadBytesExt};
+use std::io::{self, Cursor, Write};
+use std::iter::repeat;
+use std::mem::size_of;
 
 // #define NLMSG_ALIGNTO   4
 const NLMSG_ALIGNTO: usize = 4;
@@ -31,11 +27,14 @@ pub enum Payload<'a> {
 
 impl<'a> Payload<'a> {
     fn data(bytes: &'a [u8], len: usize) -> io::Result<(Payload<'a>, usize)> {
-        use std::io::{ErrorKind, Error};
+        use std::io::{Error, ErrorKind};
 
         let l = bytes.len();
         if l < len {
-            Err(Error::new(ErrorKind::InvalidData, "length of bytes too small"))
+            Err(Error::new(
+                ErrorKind::InvalidData,
+                "length of bytes too small",
+            ))
         } else {
             Ok((Payload::Data(&bytes[..len]), len))
         }
@@ -45,9 +44,9 @@ impl<'a> Payload<'a> {
         let mut cursor = Cursor::new(bytes);
         // the error field is of type c_int, but we lack proper ways of reading
         // that. FIXME: implement proper checks to ensure that c_int == i32
-        let err = try!(cursor.read_i32::<NativeEndian>());
+        let err = cursor.read_i32::<NativeEndian>()?;
         let n = cursor.position() as usize;
-        let (hdr, n2) = try!(NlMsgHeader::from_bytes(&bytes[n..]));
+        let (hdr, n2) = NlMsgHeader::from_bytes(&bytes[n..])?;
         let num = n + n2;
         if err == 0 {
             Ok((Payload::Ack(hdr), num))
@@ -58,24 +57,20 @@ impl<'a> Payload<'a> {
 
     fn bytes(&self) -> io::Result<Vec<u8>> {
         match *self {
-            Payload::None => {
-                Ok(vec!())
-            },
-            Payload::Data(b) => {
-                Ok(b.into())
-            },
+            Payload::None => Ok(vec![]),
+            Payload::Data(b) => Ok(b.into()),
             Payload::Ack(h) => {
                 let mut vec = vec![];
-                try!(vec.write_u32::<NativeEndian>(0));
-                try!(vec.write(h.bytes()));
+                vec.write_u32::<NativeEndian>(0)?;
+                let _ = vec.write(h.bytes())?;
                 Ok(vec)
             }
             Payload::Err(errno, h) => {
                 let mut vec = vec![];
-                try!(vec.write_i32::<NativeEndian>(errno));
-                try!(vec.write(h.bytes()));
+                vec.write_i32::<NativeEndian>(errno)?;
+                let _ = vec.write(h.bytes())?;
                 Ok(vec)
-            },
+            }
         }
     }
 }
@@ -88,7 +83,7 @@ pub struct Msg<'a> {
 
 impl<'a> Msg<'a> {
     pub fn from_bytes(bytes: &'a [u8]) -> io::Result<(Msg<'a>, usize)> {
-        let (hdr, n) = try!(NlMsgHeader::from_bytes(bytes));
+        let (hdr, n) = NlMsgHeader::from_bytes(bytes)?;
 
         // message length is total length minus header size
         let end: usize = hdr.msg_length() as usize;
@@ -96,34 +91,40 @@ impl<'a> Msg<'a> {
         // range check: check payload length is inside bytes and does not
         // overlap with header
         if !(n <= end && end <= bytes.len()) {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid message length"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid message length",
+            ));
         }
 
         let (payload, n2) = match hdr.msg_type() {
             MsgType::Done => (Payload::None, 0),
-            MsgType::Error => try!(Payload::nlmsg_error(&bytes[n..end])),
+            MsgType::Error => Payload::nlmsg_error(&bytes[n..end])?,
             _ => {
                 let msg_len = hdr.msg_length() as usize - nlmsg_header_length();
-                try!(Payload::data(&bytes[n..], msg_len))
+                Payload::data(&bytes[n..], msg_len)?
             }
         };
 
-        Ok((Msg{
-            header: hdr,
-            payload: payload,
-        }, n + n2))
+        Ok((
+            Msg {
+                header: hdr,
+                payload,
+            },
+            n + n2,
+        ))
     }
 
     pub fn new(hdr: NlMsgHeader, payload: Payload<'a>) -> Msg<'a> {
-        Msg{
+        Msg {
             header: hdr,
-            payload: payload,
+            payload,
         }
     }
 
     pub fn bytes(&self) -> io::Result<Vec<u8>> {
         let mut bytes: Vec<u8> = self.header.bytes().into();
-        let mut payload = try!(self.payload.bytes());
+        let mut payload = self.payload.bytes()?;
         bytes.append(&mut payload);
         Ok(bytes)
     }
@@ -153,14 +154,11 @@ pub struct Socket {
 
 impl Socket {
     pub fn new<P: Into<i32>>(protocol: P) -> io::Result<Socket> {
-        let s = try!(SocketImpl::new(AF_NETLINK, SOCK_RAW, protocol.into()));
+        let s = SocketImpl::new(AF_NETLINK, SOCK_RAW, protocol.into())?;
         let bytes = 4096;
         let mut buf = Vec::with_capacity(bytes);
         buf.extend(repeat(0u8).take(bytes));
-        Ok(Socket {
-            inner: s,
-            buf: buf,
-        })
+        Ok(Socket { inner: s, buf })
     }
 
     pub fn bind(&self, addr: NetlinkAddr) -> io::Result<()> {
@@ -171,27 +169,25 @@ impl Socket {
         self.inner.close()
     }
 
-    pub fn send<'a>(&self, message: Msg<'a>, addr: &NetlinkAddr)
-        -> io::Result<usize> {
-            let b = try!(message.bytes());
-            self.inner.sendto(b.as_slice(), 0, &addr.as_sockaddr())
+    pub fn send<'a>(&self, message: Msg<'a>, addr: &NetlinkAddr) -> io::Result<usize> {
+        let b = message.bytes()?;
+        self.inner.sendto(b.as_slice(), 0, &addr.as_sockaddr())
+    }
+
+    pub fn send_multi<'a>(&self, messages: Vec<Msg<'a>>, addr: &NetlinkAddr) -> io::Result<usize> {
+        let mut bytes = vec![];
+        for m in messages {
+            let mut b = m.bytes()?;
+            bytes.append(&mut b);
         }
 
-    pub fn send_multi<'a>(&self, messages: Vec<Msg<'a>>, addr: &NetlinkAddr)
-        -> io::Result<usize> {
-            let mut bytes = vec![];
-            for m in messages {
-                let mut b = try!(m.bytes());
-                bytes.append(&mut b);
-            }
-
-            self.inner.sendto(bytes.as_slice(), 0, &addr.as_sockaddr())
-        }
+        self.inner.sendto(bytes.as_slice(), 0, &addr.as_sockaddr())
+    }
 
     pub fn recv(&mut self) -> io::Result<(NetlinkAddr, Vec<Msg>)> {
         let buffer = &mut self.buf[..];
-        let (saddr, _) = try!(self.inner.recvfrom_into(buffer, 0));
-        let addr = try!(sockaddr_to_netlinkaddr(&saddr));
+        let (saddr, _) = self.inner.recvfrom_into(buffer, 0)?;
+        let addr = sockaddr_to_netlinkaddr(&saddr)?;
         let mut messages = vec![];
 
         let mut n = 0;
@@ -199,12 +195,10 @@ impl Socket {
             n += num_bytes;
             let t = msg.header().msg_type();
             match t {
-                MsgType::Done => {
-                    break
-                },
+                MsgType::Done => break,
                 _ => {
                     messages.push(msg);
-                },
+                }
             }
         }
 
@@ -239,8 +233,8 @@ fn nlmsg_length(len: usize) -> usize {
 mod tests {
     use super::*;
     use byteorder::{NativeEndian, WriteBytesExt};
-    use Protocol;
     use std::io::Write;
+    use Protocol;
 
     #[test]
     fn test_send_recv() {
@@ -252,7 +246,7 @@ mod tests {
         send.bind(send_addr).unwrap();
         recv.bind(recv_addr).unwrap();
 
-        let bytes = [0,1,2,3,4,5];
+        let bytes = [0, 1, 2, 3, 4, 5];
         let mut shdr = NlMsgHeader::request();
         shdr.data_length(6).seq(1).pid(102);
         let msg = Msg::new(shdr, Payload::Data(&bytes));
@@ -281,18 +275,18 @@ mod tests {
         send.bind(send_addr).unwrap();
         recv.bind(recv_addr).unwrap();
 
-        let bytes = [0,1,2,3,4,5];
+        let bytes = [0, 1, 2, 3, 4, 5];
         let mut shdr = NlMsgHeader::request();
         shdr.data_length(6).multipart().seq(1).pid(100);
         let msg = Msg::new(shdr, Payload::Data(&bytes));
         let msg2 = msg.clone();
 
-
         let mut donehdr = NlMsgHeader::done();
         donehdr.pid(100);
         let donemsg = Msg::new(donehdr, Payload::None);
 
-        send.send_multi(vec![msg, msg2, donemsg], &recv_addr).unwrap();
+        send.send_multi(vec![msg, msg2, donemsg], &recv_addr)
+            .unwrap();
 
         let (ref addr, ref vec) = recv.recv().unwrap();
         assert_eq!(vec.len(), 2);
@@ -308,7 +302,7 @@ mod tests {
 
     #[test]
     fn test_payload_decode() {
-        let bytes = [0,1,2,3,4,5];
+        let bytes = [0, 1, 2, 3, 4, 5];
         let (payload, n) = Payload::data(&bytes, bytes.len()).unwrap();
         assert_eq!(n, bytes.len());
 
@@ -329,7 +323,8 @@ mod tests {
         let mut hdr = NlMsgHeader::request();
         hdr.data_length(4).pid(9).seq(1).dump();
 
-        bytes.write(&expected).unwrap();
+        #[allow(clippy::unused_io_amount)]
+        let _ = bytes.write(&expected).unwrap();
 
         let (p, n) = Payload::nlmsg_error(&bytes).unwrap();
 
@@ -349,7 +344,7 @@ mod tests {
         let mut hdr = NlMsgHeader::request();
         hdr.data_length(4).pid(9).seq(1).dump();
 
-        bytes.write(&hdr.bytes()).unwrap();
+        let _ = bytes.write(hdr.bytes()).unwrap();
 
         let (p, n) = Payload::nlmsg_error(&bytes).unwrap();
 
@@ -368,13 +363,13 @@ mod tests {
         hdr.data_length(4).pid(9).seq(1).dump();
         let hdr_bytes = hdr.bytes();
 
-        let data = [0,1,2,3];
+        let data = [0, 1, 2, 3];
 
         let mut bytes = vec![];
-        bytes.write(&hdr_bytes).unwrap();
-        bytes.write(&data).unwrap();
+        let _ = bytes.write(hdr_bytes).unwrap();
+        let _ = bytes.write(&data).unwrap();
         // Random data
-        bytes.write(&[1,1,1,1,1,1,1]).unwrap();
+        let _ = bytes.write(&[1, 1, 1, 1, 1, 1, 1]).unwrap();
 
         let (msg, n) = Msg::from_bytes(&bytes).unwrap();
         assert_eq!(n, hdr_bytes.len() + data.len());
@@ -394,12 +389,13 @@ mod tests {
         let hdr_bytes = hdr.bytes();
 
         let mut bytes = vec![];
-        bytes.write(&hdr_bytes).unwrap();
+
+        let _ = bytes.write(hdr_bytes).unwrap();
 
         bytes.write_i32::<NativeEndian>(1).unwrap();
         let mut err_hdr = NlMsgHeader::request();
         err_hdr.data_length(4).pid(9).seq(1).dump();
-        bytes.write(&err_hdr.bytes()).unwrap();
+        let _ = bytes.write(err_hdr.bytes()).unwrap();
 
         let (msg, n) = Msg::from_bytes(&bytes).unwrap();
         assert_eq!(n, bytes.len());
